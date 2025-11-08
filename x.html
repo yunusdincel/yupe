@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mouse Escape Game - Mobile Friendly</title>
+<style>
+  body { margin:0; overflow:hidden; background-color:#111; font-family:Arial; }
+  canvas { display:block; background:#fff; }
+  #score, #timer, #settingsBtn { font-weight:bold; color:red; }
+  #score { position:absolute; top:10px; left:10px; font-size:20px; }
+  #timer { position:absolute; top:10px; right:10px; font-size:20px; }
+  #settingsBtn { position:absolute; top:50px; right:10px; font-size:16px; padding:5px 10px; cursor:pointer; }
+  #settingsPanel { display:none; position:absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); color:white; padding:20px; box-sizing:border-box; }
+  #settingsPanel h2 { margin-top:0; }
+  .closeBtn { position:absolute; top:10px; right:20px; cursor:pointer; font-size:24px; }
+  .settingButton { margin:5px; padding:5px 10px; cursor:pointer; }
+  #restartBtn { display:none; position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); font-size:24px; padding:10px 20px; cursor:pointer; background:red; color:white; border:none; border-radius:5px; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="score">Score: 0</div>
+<div id="timer">Time: 0</div>
+<div id="settingsBtn">Settings</div>
+<div id="settingsPanel">
+  <span class="closeBtn">✖</span>
+  <h2>Settings</h2>
+  <div>
+    <label>Background: </label>
+    <select id="backgroundSelect">
+      <option value="white">White</option>
+      <option value="space">Space</option>
+      <option value="sunny">Sunny Sky</option>
+      <option value="alien">Alien Invasion</option>
+      <option value="rain">Rainy Weather</option>
+      <option value="colorful">Colorful Gradient</option>
+    </select>
+  </div>
+  <div>
+    <label>Collision Sound: </label>
+    <button id="soundOn" class="settingButton">On</button>
+    <button id="soundOff" class="settingButton">Off</button>
+  </div>
+  <div>
+    <label>Difficulty: </label>
+    <button id="easyBtn" class="settingButton">Easy</button>
+    <button id="normalBtn" class="settingButton">Normal</button>
+    <button id="hardBtn" class="settingButton">Hard</button>
+  </div>
+  <div>
+    <button id="resetSettings" class="settingButton">Restart Defaults</button>
+  </div>
+</div>
+<button id="restartBtn">Restart</button>
+
+<script>
+// CANVAS
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// MOBILE CHECK
+function isMobile() { return /Mobi|Android/i.test(navigator.userAgent); }
+
+// GAME VARIABLES
+let playerRadius = 10;
+let ballRadius = 10;
+if(isMobile()){ playerRadius *= 0.6; ballRadius *= 0.6; } // %40 küçült
+
+let player = { x: canvas.width/2, y: canvas.height/2, r: playerRadius };
+let balls = [];
+let score = 0;
+let gameOver = false;
+let gamePaused = false;
+let spawnDelay = 1000;
+let lastSpawn = 0;
+let baseBallSpeed = 2;
+let currentDifficulty = "normal";
+let spawnCount = 8;
+let lastSpawnIncrease = Date.now();
+
+let settings = {
+  background: "white",
+  collisionSoundOn: true,
+  collisionEffectOn: true
+};
+
+// SOUND
+const collisionSound = new Audio("https://www.soundjay.com/button/beep-07.mp3");
+collisionSound.volume = 0.4;
+
+// PLAYER TRACKING
+let touchPos = null;
+
+window.addEventListener("mousemove", e => {
+  if(!isMobile()) { player.x = e.clientX; player.y = e.clientY; }
+});
+
+// TOUCH EVENTS FOR MOBILE
+window.addEventListener("touchstart", e => { 
+  touchPos = { x:e.touches[0].clientX, y:e.touches[0].clientY }; 
+});
+window.addEventListener("touchmove", e => { 
+  e.preventDefault(); 
+  touchPos = { x:e.touches[0].clientX, y:e.touches[0].clientY }; 
+}, { passive:false });
+window.addEventListener("touchend", () => { touchPos = null; });
+
+// SETTINGS PANEL
+const settingsPanel = document.getElementById("settingsPanel");
+const settingsBtn = document.getElementById("settingsBtn");
+const closeBtn = document.querySelector(".closeBtn");
+settingsBtn.onclick = () => { gamePaused = true; settingsPanel.style.display="block"; };
+closeBtn.onclick = () => { gamePaused = false; settingsPanel.style.display="none"; };
+
+// BACKGROUND SELECTION
+document.getElementById("backgroundSelect").addEventListener("change", e => {
+  settings.background = e.target.value;
+  restartGame();
+});
+
+// SOUND BUTTONS
+document.getElementById("soundOn").onclick = ()=>{settings.collisionSoundOn=true; restartGame();};
+document.getElementById("soundOff").onclick = ()=>{settings.collisionSoundOn=false; restartGame();};
+
+// DIFFICULTY BUTTONS
+document.getElementById("easyBtn").onclick = ()=>{setDifficulty("easy");};
+document.getElementById("normalBtn").onclick = ()=>{setDifficulty("normal");};
+document.getElementById("hardBtn").onclick = ()=>{setDifficulty("hard");};
+
+// RESET SETTINGS
+document.getElementById("resetSettings").onclick = ()=>{ resetDefaults(); };
+
+// RESTART BUTTON
+const restartBtn = document.getElementById("restartBtn");
+restartBtn.onclick = ()=>{ restartGame(); };
+
+// RANDOM COLOR
+function randomColor() { return `hsl(${Math.random()*360},80%,60%)`; }
+
+// RANDOM EDGE SPAWN
+function randomEdge() {
+  const edge = Math.floor(Math.random()*4);
+  let x, y;
+  switch(edge){
+    case 0: x=Math.random()*canvas.width; y=0; break;
+    case 1: x=Math.random()*canvas.width; y=canvas.height; break;
+    case 2: x=0; y=Math.random()*canvas.height; break;
+    case 3: x=canvas.width; y=Math.random()*canvas.height; break;
+  }
+  return {x, y};
+}
+
+// CREATE BALLS
+function createBalls(count=1){
+  const spawnPoints = [];
+  while(spawnPoints.length < count){
+    const newPoint = randomEdge();
+    if(!spawnPoints.some(p => Math.abs(p.x - newPoint.x)<5 && Math.abs(p.y - newPoint.y)<5)){
+      spawnPoints.push(newPoint);
+    }
+  }
+  spawnPoints.forEach(({x, y})=>{
+    const angle = Math.atan2(player.y - y, player.x - x);
+    balls.push({x, y, r:ballRadius, color:randomColor(), vx:Math.cos(angle)*baseBallSpeed, vy:Math.sin(angle)*baseBallSpeed});
+  });
+}
+
+// DRAW
+function draw(){
+  switch(settings.background){
+    case "white": 
+      ctx.fillStyle = "white";
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      break;
+    case "space": spaceBackground(); break;
+    case "sunny": sunnySky(); break;
+    case "alien": alienInvasion(); break;
+    case "rain": rainyWeather(); break;
+    case "colorful": colorfulBackground(); break;
+  }
+
+  // Player
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, player.r, 0, Math.PI*2);
+  ctx.fillStyle="black";
+  ctx.fill();
+
+  // Balls
+  for(let ball of balls){
+    ctx.beginPath();
+    ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI*2);
+    ctx.fillStyle = ball.color;
+    ctx.fill();
+  }
+}
+
+// UPDATE
+function update(){
+  const now = Date.now();
+
+  // Mobile movement
+  const playerSpeed = 8;
+  if(touchPos){
+    const dx = touchPos.x - player.x;
+    const dy = touchPos.y - player.y;
+    const dist = Math.hypot(dx, dy);
+    if(dist > playerSpeed){
+      player.x += dx/dist * playerSpeed;
+      player.y += dy/dist * playerSpeed;
+    } else {
+      player.x = touchPos.x;
+      player.y = touchPos.y;
+    }
+  }
+
+  balls.forEach(ball => { ball.x += ball.vx; ball.y += ball.vy; });
+
+  balls = balls.filter(ball => ball.x+ball.r>0 && ball.x-ball.r<canvas.width && ball.y+ball.r<canvas.height && ball.y-ball.r>0);
+
+  for(let ball of balls){
+    if(Math.hypot(ball.x - player.x, ball.y - player.y) < ball.r + player.r){
+      gameOver = true;
+      restartBtn.style.display="block";
+      if(settings.collisionSoundOn){ collisionSound.currentTime=0; collisionSound.play(); }
+    }
+  }
+
+  for(let i=0;i<balls.length;i++){
+    for(let j=i+1;j<balls.length;j++){
+      const dx = balls[i].x - balls[j].x;
+      const dy = balls[i].y - balls[j].y;
+      if(Math.hypot(dx, dy) < balls[i].r + balls[j].r){
+        [balls[i],balls[j]].forEach(b=>{
+          const angle = Math.random()*Math.PI*2;
+          b.vx = Math.cos(angle)*baseBallSpeed;
+          b.vy = Math.sin(angle)*baseBallSpeed;
+          if(settings.collisionEffectOn){ b.color=randomColor(); }
+        });
+      }
+    }
+  }
+
+  if(now - lastSpawn > spawnDelay){
+    createBalls(spawnCount);
+    lastSpawn = now;
+  }
+
+  if(now - lastSpawnIncrease > 10000){
+    spawnCount += 2;
+    lastSpawnIncrease = now;
+  }
+
+  if(!this.lastScore) this.lastScore = Date.now();
+  if(now - this.lastScore > 10000){
+    score += 10;
+    document.getElementById("score").textContent = "Score: "+score;
+    this.lastScore = now;
+  }
+}
+
+// GAME LOOP
+let startTime = Date.now();
+function gameLoop(){
+  if(gamePaused) return requestAnimationFrame(gameLoop);
+  if(gameOver){
+    ctx.fillStyle="red"; ctx.font="bold 60px Arial"; ctx.textAlign="center";
+    ctx.fillText("GAME OVER!", canvas.width/2, canvas.height/2 - 50);
+    ctx.font="30px Arial"; ctx.fillText(`Total Score: ${score}`, canvas.width/2, canvas.height/2);
+    return;
+  }
+  update();
+  draw();
+  let seconds = Math.floor((Date.now()-startTime)/1000);
+  document.getElementById("timer").textContent = `Time: ${seconds}`;
+  requestAnimationFrame(gameLoop);
+}
+
+// START
+function startGame(){
+  balls = [];
+  score=0;
+  gameOver=false;
+  restartBtn.style.display="none";
+  spawnCount = 8;
+  lastSpawn = Date.now();
+  lastSpawnIncrease = Date.now();
+  startTime = Date.now();
+  setBaseSpeed();
+  createBalls(4);
+  gameLoop();
+}
+
+// RESTART GAME
+function restartGame(){ startGame(); }
+
+// SET DIFFICULTY
+function setDifficulty(level){
+  currentDifficulty = level;
+  setBaseSpeed();
+  if(level==="easy"){ spawnDelay = 1000; spawnCount = 8; }
+  if(level==="normal"){ spawnDelay = 1000; spawnCount = 8; }
+  if(level==="hard"){ spawnDelay = 700; spawnCount = 8; }
+  restartGame();
+}
+
+// SET BASE SPEED
+function setBaseSpeed(){
+  baseBallSpeed = 2;
+  if(currentDifficulty==="easy") baseBallSpeed *= 0.7;
+  if(currentDifficulty==="hard") baseBallSpeed *= 1.5;
+}
+
+// RESET DEFAULT SETTINGS
+function resetDefaults(){
+  settings.background="white";
+  settings.collisionSoundOn=true;
+  currentDifficulty="normal";
+  spawnDelay=1000;
+  spawnCount=8;
+  restartGame();
+}
+
+// BACKGROUNDS
+let stars = Array.from({length: 100}, () => ({x: Math.random()*canvas.width, y: Math.random()*canvas.height, r: Math.random()*2}));
+function spaceBackground(){
+  ctx.fillStyle="#000010";
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle="white";
+  stars.forEach(s=>{
+    ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.fill();
+    s.y += 0.5; if(s.y>canvas.height) s.y=0;
+  });
+}
+let clouds = Array.from({length:10}, () => ({x:Math.random()*canvas.width,y:Math.random()*canvas.height/2,w:60+Math.random()*40,h:30+Math.random()*20}));
+function sunnySky(){
+  let grad = ctx.createLinearGradient(0,0,0,canvas.height);
+  grad.addColorStop(0,"#87CEEB");
+  grad.addColorStop(1,"#B0E0E6");
+  ctx.fillStyle=grad; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle="white";
+  clouds.forEach(c=>{
+    ctx.beginPath(); ctx.ellipse(c.x,c.y,c.w,c.h,0,0,Math.PI*2); ctx.fill();
+    c.x+=0.3; if(c.x-c.w>canvas.width)c.x=-c.w;
+  });
+}
+let invaders = Array.from({length:30},()=>({x:Math.random()*canvas.width,y:Math.random()*canvas.height,r:5+Math.random()*5,color:Math.random()>0.5?"red":"lime"}));
+function alienInvasion(){
+  ctx.fillStyle="#001010"; ctx.fillRect(0,0,canvas.width,canvas.height);
+  invaders.forEach(i=>{
+    ctx.fillStyle=i.color; ctx.beginPath(); ctx.arc(i.x,i.y,i.r,0,Math.PI*2); ctx.fill();
+    i.y+=1+Math.random(); if(i.y-i.r>canvas.height){ i.y=-i.r; i.x=Math.random()*canvas.width; }
+  });
+}
+let rainDrops = Array.from({length:200},()=>({x:Math.random()*canvas.width,y:Math.random()*canvas.height,l:10+Math.random()*10,s:4+Math.random()*4}));
+function rainyWeather(){
+  ctx.fillStyle="#4a6fa5"; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.strokeStyle="rgba(255,255,255,0.5)"; ctx.lineWidth=1;
+  rainDrops.forEach(r=>{ ctx.beginPath(); ctx.moveTo(r.x,r.y); ctx.lineTo(r.x,r.y+r.l); ctx.stroke();
+    r.y+=r.s; if(r.y>canvas.height) r.y=-r.l;
+  });
+}
+const colors = ["#ff0000","#00ff00","#0000ff","#ffff00","#ff00ff","#00ffff","#ffa500","#800080","#008000","#ff69b4"];
+let colorIndex = 0, prevColor = colors[0], nextColor = colors[1], colorTime = Date.now();
+function hexToRgb(hex){ let bigint=parseInt(hex.replace("#",""),16); return {r:(bigint>>16)&255,g:(bigint>>8)&255,b:bigint&255}; }
+function rgbToHex(r,g,b){ return "#"+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1); }
+function lerpColor(c1,c2,t){ return {r:c1.r+(c2.r-c1.r)*t,g:c1.g+(c2.g-c1.g)*t,b:c1.b+(c2.b-c1.b)*t}; }
+function colorfulBackground(){
+  const now = Date.now();
+  let t = (now-colorTime)/1000;
+  if(t>1){
+    colorIndex = (colorIndex+1)%colors.length;
+    prevColor = nextColor;
+    nextColor = colors[(colorIndex+1)%colors.length];
+    colorTime = now;
+    t=0;
+  }
+  let c1=hexToRgb(prevColor), c2=hexToRgb(nextColor);
+  let c=lerpColor(c1,c2,t);
+  ctx.fillStyle = rgbToHex(Math.floor(c.r),Math.floor(c.g),Math.floor(c.b));
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+}
+
+// INITIAL START
+startGame();
+</script>
+</body>
+</html>
